@@ -1,0 +1,172 @@
+logging: /home/id/apps/fsync/var/log
+#env:
+#  source_options: &source_options
+#    port: 22
+#    username: id
+#    password: pass
+#    private_key: ~/.ssh/some_server
+
+env:
+    # The environment is a global context used for string interpolation and also some runtime config
+    private_key: ~/.ssh/some_server
+    my_server: sftp://id:pass@some_server:22
+    some_test_files: /home/id/test/dir5/*
+
+    object_interpolation:
+        url: ${ env.my_server }
+        path: ${ env.some_test_files }
+
+fsync:
+  test:
+    stop_on_error: false
+    source:
+      private_key: ~/.ssh/some_server
+      url: sftp://id:pass@some_server:22
+      path: /home/id/test/dir1/*
+#      move: /home/id9/test/dir2/
+    destination:
+      - url: sftp://id9:pass@some_server:22/home/id/test/dir3/
+        private_key: ~/.ssh/10.241.65.108
+        overwrite: true
+#      - url: sftp://id:pass@some_server:22/home/id/test/dir4/
+#        overwrite: true
+        compress: gzip
+
+  get_pre_cdo:
+    hooks:
+      - pre_command:
+          cmd: [ "/home/id/apps/fsync/venv/bin/python", "/home/id/apps/fsync/cdo/some.py",
+                 "--url=http://web.net/some-api",
+                 "--out-json-file=/home/id/apps/fsync/cdo/test/some.json",
+                 "--out-csv-file=/home/id/apps/fsync/cdo/test/some.csv",
+                 "--input-tadig-csv-file=/home/id/apps/fsync/cdo/var/csv/some.csv"]
+    source:
+      - sftp://id:pass@some_server:22/home/id/apps/fsync/cdo/test/some.csv
+    destination:
+      - path: /home/id/test/dir4
+        overwrite: true
+
+  get_post_cdo:
+    hooks:
+      - never_transfer_files_during_fullmoon
+      - exclude_evil_files
+      - check_free_space:
+          /tmp: 100M
+          /mnt: 5%
+      - force_file_range:
+          # The hook call can be a dict mapping hook's potential named arguments
+          minimum: 0
+          maximum: 100
+      - sort_by_filename
+      - limit:
+          max_files: 30
+      - post_command:
+          #condition: task.transferred != 0  # ensures we have at least one file
+          cmd: [ "/home/id/apps/fsync/venv/bin/python", "/home/id/apps/fsync/cdo/some.py",
+                 "--url=http://web.net/api",
+                 "--out-json-file=/home/id/apps/fsync/cdo/test/some.json",
+                 "--out-csv-file=/home/id/apps/fsync/cdo/test/some..csv",
+                 "--input-tadig-csv-file=/home/id/apps/fsync/cdo/var/csv/some.csv" ]
+    source:
+      - sftp://id:Test9900!@10.241.65.108:22/home/id/apps/fsync/cdo/test/some.csv
+    destination:
+      - path: /home/id/test/dir5
+        overwrite: true
+
+  custom_logger:
+    source: /home/id/apps/fsync/cdo/var/log/some.log
+    destination:
+      - path: /home/id/test/dir5/
+        overwrite: true
+    logger: gtp  # by default, the logger name default to the task name (here: local_helpers)
+    loglevel: debug  # by default the loglevel is info, you can change it here
+
+  crontab_entry:
+    source:
+      url: /home/id/apps/fsync/cdo/var/log/*.log*
+      move: /home/id/test/dir5/
+    crontab: '*/5 * * * *'
+    destination:
+      - path: /home/id/test/dir5/
+        overwrite: true
+
+  compress:
+    source:
+      private_key: ~/.ssh/some_server
+      url: sftp://id:pass@some_server:22
+      path: /home/id/apps/fsync/cdo/var/log/*.log*
+    destination:
+      - url: /home/id/test/gzip/
+        compress: gzip  # Gzip compress ( .gz extension will be automatically added to the destination filename )
+        overwrite: true
+      - url: /home/id/test/bzip2/
+        compress: bzip2  # Bzip2 compress ( .bz2 extension will be automatically added to the destination filename )
+        overwrite: true
+      - url: /home/id/test/zip/
+        compress: zip  # zip compress ( .zip extension will be automatically added to the destination filename )
+        overwrite: true
+
+  testing_sort:
+      source: /home/id/test/dir3/*
+      hooks:
+          - sort_by_attribute:
+              attribute: basename
+              ignore_case: true
+          - limit:
+              max_files: 5
+              max_size: 200M
+              max_age: 3600*24*7  # one week
+          - print_files
+      destination:
+        url: /home/id/test/dir6/
+        overwrite: true
+
+  testing_overwrite_skip:
+      hooks:
+          - create_test_files
+      source:
+          url: /home/id/apps/fsync/cdo/var/log/*.log*
+          move: /home/id/test/archives/
+          move_overwrite: true
+      destination:
+          url: /home/id/test/dir6/
+          overwrite: skip
+
+  testing_scoped_hooks:
+      # This sample will sync 3 first alphabetically files + 3 last one
+      source:
+          - url: /home/id/apps/fsync/cdo/var/log/*.log*
+            hooks:
+              - sort_by_filename:
+                  ignore_case: true
+              - limit:
+                  max_files: 3
+          - url: /home/id/test/dir5/*
+            hooks:
+              - sort_by_filename:
+                  ignore_case: true
+                  reverse: true
+              - limit:
+                  max_files: 3
+      hooks:
+          - print_files
+
+  testing_disk_full:
+      source: /home/id/apps/fsync/cdo/var/log/*
+      destination: /home/id/test/dir7/
+      stop_on_error: false
+
+  object_interpolation:
+      source: ${ env.object_interpolation }
+      hooks:
+          - print_files
+
+  dynamic_destinations:
+      # Here's an example about using a hook in order to add dynamic destinations
+      source: /home/apps/fsync/cdo/var/log/cdo_num_plan_fetch.log
+      hooks:
+          - fetch_destinations
+
+#  testing_ftp:
+#    source: ftp://localhost:2121/test/dir1/*
+#    destination: ftp://localhost:2121/try_with_a_symlink/

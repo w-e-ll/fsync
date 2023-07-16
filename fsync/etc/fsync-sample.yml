@@ -1,0 +1,294 @@
+basedir: ../  # by default, the current working directory is set to the config file's directory
+              # the 'basedir' key allows you to define the current working directory to use
+              # It can be a relative, absolute or user expandable path.
+
+env:
+    # The environment is a global context used for string interpolation and also some runtime config
+    my_server: sftp://localhost
+    some_test_files: /var/log/*
+
+    object_interpolation:
+        url: ${ env.my_server }
+        path: ${ env.some_test_files }
+
+env.prod:
+    # Alternate environments are merged in the main environment if specified
+    # in command line. Format is `env.[specified name]`, Eg:
+    #   $ fsync --config=fsync-sample.yml --env=prod
+    my_server: sftp://prod_user:password@csv_prod_server
+
+env.uat:
+    my_server: sftp://uat_user:password@csv_uat_server
+
+logging: /tmp/fsync-logs/
+    # A string means that you will use the auto logging feature.
+
+    # Note: If this autologging feature does not suits your need, you can manually specify your logging
+    #       configuration with the same `logging` key but using a dictionnary as a value.
+    #       You can also include another file using the `!include` constructor eg:
+    #         logging: !include logging.yml
+
+fsync:
+    basic_sample:  # A basic sample showing how to use fsync with minimal needs
+        source: ftp://myuser:password@foo:2121/var/log/sirius-*.log
+        destination: sftp://user:password@bar:/var/log/sirius-backups/
+
+    multiple_source_dest:  # Multiple source/dest can be expressed with a verbose configuration
+        source:
+            - file://var/log/sirius*.log
+            - /var/log/new-new-sirius*.log  # file:// is the default scheme so it can be omitted
+            - url: sftp://user:password@foo:/bar
+
+        destination:
+            # WARNING: Multiple destination are strongly disadvised because by design,
+            #          an IOError might result in an inconsistent state in the flow.
+            - url: sftp://user:password@localhost/tmp/var/log/sirius
+            - url: ftp://user:password@localhost:2121/tmp/ftp_sync
+
+    using_env:  # Using expressions and the environment object
+        source:
+            # An expression `${ expr }` is always evaluated using the current transfer's context.
+            # Each context have an `env` key which is the user's provided `env` key in the config
+            # file.
+            - ${ env.my_server }/first/*.csv
+            - ${ env.my_server }/second/*.csv
+            - ${ env.my_server }/third/*.csv
+        destination: /apps/aggregate/
+
+    post_actions:  # Post actions
+        source:
+            url: sftp://user:password@foo:/bar/*.log
+            move: ../archive/${ source_file.basename }_done.log.gz  # if not absolute, always relative to original file, even on remote
+
+        destination:
+            - url: sftp://user:password@localhost/tmp/var/log/sirius
+            - url: ftp://user:password@localhost:2121/tmp/ftp_sync
+
+    single_source:  # Single source can be used when we only want an action to be performed
+        source:
+            path: /var/cdr/archive/*.csv
+            delete: true
+
+    local_helpers:  # Using local helpers and logging
+        source:
+            url: sftp://server:/var/log/application.log
+            username: !os_environ USER  # will call the yaml_os_environ() method on the application (returns the given key from os's $ENVIRON)
+            password: password
+        destination: ../../log/application.log
+
+    custom_logger:
+        source: /var/log/auth.log
+        destination: /tmp/fsync-test/
+        logger: gtp  # by default, the logger name default to the task name (here: local_helpers)
+        loglevel: debug  # by default the loglevel is info, you can change it here
+
+    crontab_entry:
+        source:
+            url: /var/log/*.log.*
+            move: archives
+        crontab: '*/5 * * * *'
+
+
+    compress:
+        source:
+            scheme: sftp
+            hostname: localhost
+            port: 22
+            username: !get_environ USER  # will call the yaml_get_environ()
+            private_key: ~/.ssh/id_rsa
+            path: /var/log/<name>.log
+        destination:
+            - url: /tmp/fsync-testing/gzip/
+              compress: gzip  # Gzip compress ( .gz extension will be automatically added to the destination filename )
+            - url: /tmp/fsync-testing/bzip2/
+              compress: bzip2  # Bzip2 compress ( .bz2 extension will be automatically added to the destination filename )
+            - url: /tmp/fsync-testing/zip/
+              compress: zip  # zip compress ( .zip extension will be automatically added to the destination filename )
+
+    testing:
+        source: /var/<dir>/*.log
+        destination: /tmp/fsync-testing/${ dir }/
+        crontab: '*/5 * * * *'
+        stop_on_error: false
+
+    testing_archives:
+        source:
+            url: /tmp/fsync-testing/log/*
+            move: ./archives/
+
+    testing_ftp:
+        source: ftp://localhost:2121/test/*
+        destination: ftp://localhost:2121/try_with_a_symlink/
+
+    testing_ssh:
+        stop_on_error: false
+        source: ${ env.my_server }${ env.some_test_files }
+        destination:
+            url: /tmp/fsync-testing/logs/
+            # The work path provides atomic transfer feature and can be configured.
+            # Please refer to the documentation for it's default value, ...
+            # ...
+            # What ? You can't find the documentation ??? Mhhhh, ... that must be a bug.
+            work_path: '../temporary_work_path/${ source_file.basename }'
+            # The default value of work_path is   .${ source_file.basename }.tmp
+            # You don't have to specify `work_path` to benefit of the atomic transfer feature
+
+    # TODO: make a test suite with real transfers. Should do it ASAP !
+    testing_hooks:
+        source: /var/<dir>/*.log
+        destination: /tmp/fsync-testing-hooks/${ dir }/
+        hooks:
+            - never_transfer_files_during_fullmoon
+            - exclude_evil_files
+            - check_free_space:
+                /tmp: 100M
+                /mnt: 5%
+            - force_file_range:
+                # The hook call can be a dict mapping hook's potential named arguments
+                minimum: 10
+                maximum: 100
+            - hard_link:
+                path: ${ destination_file.path }.hard-link
+
+    testing_sort:
+        source: /var/log/*.log
+        hooks:
+            - sort_by_attribute:
+                attribute: basename
+                ignore_case: true
+            - limit:
+                max_files: 5
+                max_size: 200M
+                max_age: 3600*24*7  # one week
+            - print_files
+
+    testing_overwrite_skip:
+        hooks:
+            - create_test_files
+        source:
+            url: /tmp/test/source/*.log
+            move: ../archives/
+            move_overwrite: true
+        destination:
+            url: /tmp/test/dest/
+            overwrite: skip
+
+    testing_scoped_hooks:
+        # This sample will sync 3 first alphabetically files + 3 last one
+        source:
+            - url: /var/log/*.log
+              hooks:
+                - sort_by_filename:
+                    ignore_case: true
+                - limit:
+                    max_files: 3
+            - url: /var/log/*.log
+              hooks:
+                - sort_by_filename:
+                    ignore_case: true
+                    reverse: true
+                - limit:
+                    max_files: 3
+        hooks:
+            - print_files
+
+    testing_disk_full:
+        source: /var/log/*
+        destination: /dev/full
+        stop_on_error: false
+
+    # TODO: is it worth implementing this ? Check also the ansible way.
+    # testing_foreach_list:
+    #     hooks:
+    #         - create_test_files
+    #     foreach:
+    #         - folder: source1
+    #           prefix: my-files-from-source1
+    #         - folder: source2
+    #           prefix: my-files-from-source2
+    #         - folder: source3
+    #           prefix: my-files-from-source3
+    #     source: /tmp/test/${ folder }/${ prefix }.tst
+    #     destination: /tmp/test-dest/
+
+    commands:
+        source: /var/log/boot.log
+        hooks:
+            - pre_command:
+                # shell argument will be executed trough `bash -c`
+                shell: ls -a /var/log > /tmp/testing-commands.txt
+
+            - post_command:
+                cmd: /bin/bzip2 -f -k /tmp/testing-commands.txt
+
+                encoding: latin1  # by default the stdout/err of the process will be decoded
+                                  # using utf8, but you can overwrite this if needed
+            - post_command:
+                shell: rm /tmp/testing-commands* /tmp/DO_NOT_EXIST  || echo "Success wathever !"
+                logger: das_command  # you can provide a custom logger name
+
+            - post_command:
+                # By default, a post_command won't be executed if any error
+                # occured. The `condition` option allows to specify a custom
+                # expression in order to decide if the command should be
+                # executed or not.
+                condition: task.transferred != 0  # execute if files were transferred
+
+                # Use an array if you need safe arguments seperation.
+                # Command arguments are evaluated too and flattened afterward
+                # this is really hackish/advanced stuff but it can be handy !
+                shell: [ ls, -al, "${ [ fi.path for fi in source_files ] }" ]
+
+    object_interpolation:
+        source: ${ env.object_interpolation }
+        hooks:
+            - print_files
+
+    dynamic_destinations:
+        # Here's an example about using a hook in order to add dynamic destinations
+        source: /var/log/boot.log
+        hooks:
+            - fetch_destinations  # see the function here below in the hooksdef
+
+
+# Custom hooks
+hooksdef: |
+    from fsync.hooks import register
+
+    # Here we can map, sort, exclude, filter, ... the generator of incoming
+    # FileInfo instances. The returned list will be used for the transfer.
+    @register('list_source_files')
+    def exclude_evil_files(task, files, number_of_the_beast=666):
+        return filter(lambda fi: fi.size != number_of_the_beast and 'kern' not in fi.basename, files)
+
+    @register('will_start_transfer')
+    def never_transfer_files_during_fullmoon(task):
+        try:
+            from solar_system.moon import is_full_moon_date
+        except ImportError:
+            task.log.warning("Could not import solar system !?")
+            is_full_moon_date = lambda d: False
+        if is_full_moon_date(task.start_date):
+            task.interrupt("♫ 'Cause this is thriller, thriller night ♫")
+
+    @register('will_start_transfer')
+    def fetch_destinations(task):
+        # Let's say that we get the destinations from a file, a DB, ...
+        destinations = [
+            '/tmp/opa/',
+            'sftp://localhost/tmp/gangnam/',  # can be simple strings
+            {  # or a dictionnary if you have options:
+                'url': 'sftp://localhost/tmp/style/',
+                'private_key': '~/.ssh/id_rsa',
+                'compress': 'gzip',
+            },
+        ]
+
+        # Then we dynamically add them to the task/transfer object
+        for dest in destinations:
+            task.add_destination(dest)
+
+# OR load a python file containing custom hook definitions
+# hooksdef: ../scripts/fsync_hooks.py
+
+
